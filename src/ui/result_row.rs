@@ -1,10 +1,10 @@
-use gpui::{div, img, prelude::*, px, Div};
+use gpui::{div, img, prelude::*, px, Animation, AnimationExt, AnyElement, Div, Rgba};
 
 use crate::apps::AppEntry;
 use crate::theme::{self, Theme};
 
-pub fn result_row(app: &AppEntry, selected: bool) -> impl IntoElement {
-    div()
+pub fn result_row(app: &AppEntry, selected: bool, move_count: u64) -> AnyElement {
+    let row = div()
         .flex()
         .items_center()
         .gap_3()
@@ -12,13 +12,29 @@ pub fn result_row(app: &AppEntry, selected: bool) -> impl IntoElement {
         .py_1p5()
         .rounded_lg()
         .text_size(px(15.))
-        .when(selected, |el| {
-            el.bg(Theme::SELECTED_BG)
-                .text_color(Theme::SELECTED_TEXT)
-        })
+        .when(selected, |el| el.text_color(Theme::SELECTED_TEXT))
         .when(!selected, |el| el.text_color(Theme::RESULT_TEXT))
         .child(icon_element(app))
-        .child(app.name.clone())
+        .child(app.name.clone());
+
+    if selected {
+        row.with_animation(
+            ("row-select", move_count as usize),
+            Animation::new(std::time::Duration::from_millis(140)),
+            |row: Div, delta| {
+                let ease = 1.0 - (1.0 - delta) * (1.0 - delta);
+                row.bg(fade_in(Theme::SELECTED_BG, ease as f32))
+            },
+        )
+        .into_any_element()
+    } else {
+        row.into_any_element()
+    }
+}
+
+/// Returns `color` with its alpha channel set to `alpha`.
+fn fade_in(color: Rgba, alpha: f32) -> Rgba {
+    Rgba { a: alpha, ..color }
 }
 
 fn icon_element(app: &AppEntry) -> impl IntoElement {

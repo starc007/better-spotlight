@@ -1,4 +1,7 @@
-use gpui::{div, prelude::*, Context, FocusHandle, Focusable, KeyDownEvent, Render, Window};
+use gpui::{
+    div, prelude::*, px, Animation, AnimationExt, Context, FocusHandle, Focusable, KeyDownEvent,
+    Render, Window,
+};
 
 use crate::apps::{self, AppEntry};
 use crate::fuzzy;
@@ -11,6 +14,7 @@ pub struct Spotlight {
     apps: Vec<AppEntry>,
     results: Vec<AppEntry>,
     selected: usize,
+    move_count: u64,
 }
 
 impl Spotlight {
@@ -24,6 +28,7 @@ impl Spotlight {
             apps: all_apps,
             results,
             selected: 0,
+            move_count: 0,
         }
     }
 
@@ -59,16 +64,19 @@ impl Spotlight {
             }
             "up" => {
                 self.selected = self.selected.saturating_sub(1);
+                self.move_count += 1;
             }
             "down" => {
                 if self.selected + 1 < self.results.len() {
                     self.selected += 1;
+                    self.move_count += 1;
                 }
             }
             key => {
                 if key.len() == 1 && event.keystroke.modifiers == Default::default() {
                     self.query.push_str(key);
                     self.refilter();
+                    self.move_count += 1;
                 }
             }
         }
@@ -97,7 +105,10 @@ impl Render for Spotlight {
             .iter()
             .enumerate()
             .take(theme::MAX_VISIBLE_RESULTS)
-            .map(|(i, app)| ui::result_row::result_row(app, i == self.selected).into_any_element())
+            .map(|(i, app)| {
+                ui::result_row::result_row(app, i == self.selected, self.move_count)
+                    .into_any_element()
+            })
             .collect();
 
         let body: Vec<_> = if rows.is_empty() {
@@ -119,13 +130,19 @@ impl Render for Spotlight {
                     .flex_col()
                     .overflow_hidden()
                     .rounded_xl()
-                    .border_1()
-                    .border_color(Theme::BORDER)
                     .bg(Theme::BG)
                     .shadow_xl()
                     .child(ui::input_field(&self.query))
                     .children(body)
                     .child(ui::footer()),
+            )
+            .with_animation(
+                "panel-open",
+                Animation::new(std::time::Duration::from_millis(160)),
+                |el, delta| {
+                    let ease = 1.0 - (1.0 - delta) * (1.0 - delta);
+                    el.opacity(ease).top(px((1.0 - ease) * 6.0))
+                },
             )
     }
 }

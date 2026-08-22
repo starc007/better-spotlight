@@ -7,15 +7,6 @@ use gpui::{div, prelude::*, px, Animation, AnimationExt, AnyElement, Div};
 use crate::theme::Theme;
 
 pub fn input_field(query: &str) -> Div {
-    let query_display: AnyElement = if query.is_empty() {
-        div()
-            .text_color(Theme::PLACEHOLDER)
-            .child("Search applications…")
-            .into_any_element()
-    } else {
-        div().into_any_element()
-    };
-
     div()
         .flex()
         .items_center()
@@ -23,13 +14,14 @@ pub fn input_field(query: &str) -> Div {
         .pt_3p5()
         .pb_3()
         .gap_1()
-        .border_b_1()
-        .border_color(Theme::BORDER)
         .text_size(px(20.))
         .text_color(Theme::INPUT_TEXT)
-        .when(!query.is_empty(), |el| el.child(query.to_string()))
-        .child(query_display)
-        .child(caret())
+        .when(query.is_empty(), |el| {
+            el.child(div().text_color(Theme::PLACEHOLDER).child("Search applications…"))
+        })
+        .when(!query.is_empty(), |el| {
+            el.child(query.to_string()).child(caret())
+        })
 }
 
 pub fn results_list(children: Vec<AnyElement>) -> Div {
