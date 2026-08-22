@@ -13,7 +13,6 @@ pub fn input_field(query: &str) -> Div {
         .px_4()
         .pt_3p5()
         .pb_3()
-        .gap_1()
         .text_size(px(20.))
         .text_color(Theme::INPUT_TEXT)
         .when(query.is_empty(), |el| {
@@ -61,7 +60,7 @@ pub fn footer() -> Div {
         .text_color(Theme::FOOTER_TEXT)
         .child(hint("↑↓", "Navigate"))
         .child(hint("↵", "Open"))
-        .child(hint("esc", "Clear"))
+        .child(hint("esc", "Close"))
 }
 
 fn hint(key: &str, label: &str) -> impl IntoElement {

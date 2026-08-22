@@ -47,20 +47,29 @@ impl Spotlight {
         self.selected = 0;
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.keystroke.key.as_ref() {
             "backspace" => {
-                self.query.pop();
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.platform {
+                    // ⌘⌫: clear the whole line
+                    self.query.clear();
+                } else if modifiers.alt {
+                    // ⌥⌫: delete the previous word
+                    delete_word(&mut self.query);
+                } else {
+                    self.query.pop();
+                }
                 self.refilter();
             }
             "escape" => {
-                self.query.clear();
-                self.refilter();
+                window.remove_window();
             }
             "enter" => {
                 if let Some(app) = self.results.get(self.selected) {
                     apps::launch(&app.path);
                 }
+                window.remove_window();
             }
             "up" => {
                 self.selected = self.selected.saturating_sub(1);
@@ -90,6 +99,25 @@ fn app_dirs() -> Vec<String> {
         dirs.push(format!("{home}/Applications"));
     }
     dirs
+}
+
+/// Deletes the word before the (implicit) caret, like standard macOS text fields.
+fn delete_word(query: &mut String) {
+    let mut chars: Vec<char> = query.chars().collect();
+    while let Some(&c) = chars.last() {
+        chars.pop();
+        if c.is_alphanumeric() {
+            break;
+        }
+    }
+    while let Some(&c) = chars.last() {
+        if c.is_alphanumeric() {
+            chars.pop();
+        } else {
+            break;
+        }
+    }
+    *query = chars.into_iter().collect();
 }
 
 impl Focusable for Spotlight {
