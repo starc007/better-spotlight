@@ -16,6 +16,8 @@ use gpui::{
     App, AppContext, Application, Bounds, Global, KeyBinding, Point, WindowBackgroundAppearance,
     WindowBounds, WindowKind, WindowOptions, px, size,
 };
+use objc2::MainThreadMarker;
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 
 struct HotKeyRegistration {
     _manager: GlobalHotKeyManager,
@@ -23,9 +25,23 @@ struct HotKeyRegistration {
 
 impl Global for HotKeyRegistration {}
 
+fn configure_as_background_launcher() {
+    let main_thread = MainThreadMarker::new().expect("GPUI launches the app on the main thread");
+    let application = NSApplication::sharedApplication(main_thread);
+    assert!(
+        application.setActivationPolicy(NSApplicationActivationPolicy::Accessory),
+        "macOS rejected the accessory activation policy"
+    );
+}
+
 fn main() {
     let shortcut = config::load_shortcut();
     Application::new().run(move |cx: &mut App| {
+        // GPUI 0.2 sets the process to a regular app after launch, overriding
+        // LSUIElement. Restore accessory behavior so the launcher stays out of
+        // the Dock and Command-Tab switcher.
+        configure_as_background_launcher();
+
         cx.bind_keys([
             KeyBinding::new("cmd-v", search::Paste, None),
             KeyBinding::new("cmd-a", search::SelectAllInput, None),
@@ -67,8 +83,8 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,
-            focus: true,
-            show: true,
+            focus: false,
+            show: false,
             kind: WindowKind::PopUp,
             is_movable: false,
             is_resizable: false,
@@ -80,7 +96,6 @@ fn main() {
             .open_window(options, |window, cx| {
                 let shortcut_label = shortcut.label.clone();
                 let view = cx.new(|cx| search::Spotlight::new(cx, shortcut_label));
-                view.read(cx).focus.clone().focus(window);
                 view.update(cx, |_spotlight, cx| {
                     cx.observe_window_activation(window, |_spotlight, window, cx| {
                         if !window.is_window_active() {
@@ -95,8 +110,6 @@ fn main() {
                 view
             })
             .unwrap();
-
-        cx.activate(true);
 
         let clipboard_handle = handle;
         cx.spawn(async move |cx| {

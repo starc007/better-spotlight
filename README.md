@@ -15,7 +15,8 @@ A fast, native Spotlight replacement for macOS, built with Rust and
 - Finder-native file and folder icons with grouped results
 - Calculator expressions with Enter-to-copy results
 - Private, in-memory clipboard history with search and deletion controls
-- Borderless floating panel, always on top
+- Background accessory with no Dock or ⌘Tab presence
+- Borderless floating panel, shown only when invoked
 - Configurable global shortcut (⌘Space by default)
 
 ## Install
