@@ -27,6 +27,18 @@ pub fn results_list(children: Vec<AnyElement>) -> Div {
         .children(children)
 }
 
+pub fn section_header(label: &str) -> Div {
+    div()
+        .h(px(18.))
+        .flex()
+        .items_center()
+        .px_3()
+        .text_size(px(10.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(Theme::FOOTER_TEXT)
+        .child(label.to_string())
+}
+
 pub fn empty_state(message: &str) -> Div {
     div()
         .flex()
@@ -38,7 +50,7 @@ pub fn empty_state(message: &str) -> Div {
         .child(message.to_string())
 }
 
-pub fn footer(message: Option<&str>) -> Div {
+pub fn footer(message: Option<&str>, shortcut: &str) -> Div {
     let footer = div()
         .mt_auto()
         .flex()
@@ -61,6 +73,7 @@ pub fn footer(message: Option<&str>) -> Div {
             )
         })
         .when(message.is_none(), |footer| footer.child(div().flex_1()))
+        .child(hint(shortcut, "Toggle"))
         .child(hint("↑↓", "Navigate"))
         .child(hint("↵", "Open"))
         .child(hint("esc", "Close"))

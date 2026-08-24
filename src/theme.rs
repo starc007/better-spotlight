@@ -3,6 +3,7 @@ use gpui::Rgba;
 pub const WINDOW_WIDTH: f32 = 720.0;
 pub const WINDOW_HEIGHT: f32 = 460.0;
 pub const MAX_VISIBLE_RESULTS: usize = 7;
+pub const MULTI_GROUP_VISIBLE_RESULTS: usize = 6;
 pub const ICON_SIZE: f32 = 32.0;
 pub const RESULT_ROW_HEIGHT: f32 = 44.0;
 

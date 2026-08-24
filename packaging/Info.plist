@@ -26,5 +26,11 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Better Spotlight searches and opens files from your Desktop.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Better Spotlight searches and opens files from your Documents folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Better Spotlight searches and opens files from your Downloads folder.</string>
 </dict>
 </plist>
