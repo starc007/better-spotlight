@@ -1,5 +1,7 @@
 mod apps;
+mod files;
 mod fuzzy;
+mod results;
 mod search;
 mod theme;
 mod ui;

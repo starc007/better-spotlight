@@ -4,6 +4,7 @@ pub const WINDOW_WIDTH: f32 = 720.0;
 pub const WINDOW_HEIGHT: f32 = 460.0;
 pub const MAX_VISIBLE_RESULTS: usize = 7;
 pub const ICON_SIZE: f32 = 32.0;
+pub const RESULT_ROW_HEIGHT: f32 = 44.0;
 
 const fn hex_rgb(hex: u32) -> Rgba {
     let b = (hex & 0xff) as f32 / 255.0;
@@ -18,6 +19,7 @@ impl Theme {
     pub const INPUT_TEXT: Rgba = hex_rgb(0xf2f3f5);
     pub const PLACEHOLDER: Rgba = hex_rgb(0x6b6f7b);
     pub const RESULT_TEXT: Rgba = hex_rgb(0xc9ccd4);
+    pub const RESULT_META: Rgba = hex_rgb(0x777b87);
     pub const SELECTED_BG: Rgba = hex_rgb(0x27408f);
     pub const SELECTED_TEXT: Rgba = hex_rgb(0xffffff);
     pub const CARET: Rgba = hex_rgb(0x8b8e97);

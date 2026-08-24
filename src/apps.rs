@@ -17,7 +17,7 @@ pub struct AppEntry {
 
 pub fn scan(dirs: &[String]) -> Vec<AppEntry> {
     let mut apps: Vec<AppEntry> = dirs.iter().flat_map(|dir| scan_dir(dir)).collect();
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.sort_by_key(|app| app.name.to_lowercase());
     apps.dedup_by(|a, b| a.path == b.path);
     apps
 }

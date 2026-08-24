@@ -1,17 +1,23 @@
 use std::collections::HashSet;
 use std::ops::Range;
-use std::time::Instant;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+use std::time::{Duration, Instant};
 
 use gpui::{
-    Animation, AnimationExt, App, Bounds, Context, Element, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId,
-    IntoElement, KeyDownEvent, LayoutId, PaintQuad, Pixels, Render, ShapedLine, SharedString,
-    Style, TextRun, UTF16Selection, Window, actions, div, fill, point, prelude::*, px, relative,
-    size,
+    Animation, AnimationExt, App, Bounds, ClickEvent, Context, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla,
+    InspectorElementId, IntoElement, KeyDownEvent, LayoutId, PaintQuad, Pixels, Render,
+    ScrollWheelEvent, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window, actions,
+    div, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::apps::{self, AppEntry};
+use crate::files::{self, FileEntry};
 use crate::fuzzy;
+use crate::results::SearchResult;
 use crate::theme::{self, Theme};
 use crate::ui;
 
@@ -21,11 +27,15 @@ pub struct Spotlight {
     pub focus: FocusHandle,
     query: String,
     apps: Vec<AppEntry>,
-    results: Vec<AppEntry>,
+    files: Vec<FileEntry>,
+    results: Vec<SearchResult>,
     selected: usize,
     visible_start: usize,
+    scroll_remainder: Pixels,
     move_count: u64,
     loading: bool,
+    files_loading: bool,
+    file_request_id: Arc<AtomicU64>,
     loading_icons: HashSet<String>,
     message: Option<String>,
     shortcut_error: Option<String>,
@@ -57,11 +67,15 @@ impl Spotlight {
             focus: cx.focus_handle(),
             query: String::new(),
             apps: Vec::new(),
+            files: Vec::new(),
             results: Vec::new(),
             selected: 0,
             visible_start: 0,
+            scroll_remainder: Pixels::ZERO,
             move_count: 0,
             loading: true,
+            files_loading: false,
+            file_request_id: Arc::new(AtomicU64::new(0)),
             loading_icons: HashSet::new(),
             message: None,
             shortcut_error: None,
@@ -74,6 +88,9 @@ impl Spotlight {
 
     pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.clear();
+        self.files.clear();
+        self.file_request_id.fetch_add(1, Ordering::Relaxed);
+        self.files_loading = false;
         self.marked_range = None;
         self.message = None;
         self.refilter();
@@ -98,7 +115,12 @@ impl Spotlight {
 
     fn refilter(&mut self) {
         if self.query.is_empty() {
-            self.results = self.apps.clone();
+            self.results = self
+                .apps
+                .iter()
+                .cloned()
+                .map(SearchResult::Application)
+                .collect();
         } else {
             let mut scored: Vec<(i32, AppEntry)> = self
                 .apps
@@ -109,11 +131,64 @@ impl Spotlight {
                 b.0.cmp(&a.0)
                     .then_with(|| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()))
             });
-            self.results = scored.into_iter().map(|(_, app)| app).collect();
+            self.results = scored
+                .into_iter()
+                .map(|(_, app)| SearchResult::Application(app))
+                .chain(self.files.iter().cloned().map(SearchResult::File))
+                .collect();
         }
         self.selected = 0;
         self.visible_start = 0;
+        self.scroll_remainder = Pixels::ZERO;
         self.message = None;
+    }
+
+    fn query_changed(&mut self, cx: &mut Context<Self>) {
+        self.files.clear();
+        let request_id = self.file_request_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let latest_request = self.file_request_id.clone();
+        let query = self.query.trim().to_string();
+        self.files_loading = !query.is_empty();
+        self.refilter();
+
+        if query.is_empty() {
+            return;
+        }
+
+        let executor = cx.background_executor().clone();
+        let timer = executor.clone();
+        let task = executor.spawn(async move {
+            timer.timer(Duration::from_millis(180)).await;
+            (latest_request.load(Ordering::Relaxed) == request_id).then(|| files::search(&query))
+        });
+        cx.spawn(async move |this, cx| {
+            let Some(search_result) = task.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.file_request_id.load(Ordering::Relaxed) != request_id {
+                    return;
+                }
+                this.files_loading = false;
+                match search_result {
+                    Ok(matches) => {
+                        let selected = this.selected;
+                        let visible_start = this.visible_start;
+                        this.files = matches;
+                        this.refilter();
+                        if !this.results.is_empty() {
+                            this.selected = selected.min(this.results.len() - 1);
+                            this.visible_start = visible_start.min(this.selected);
+                        }
+                    }
+                    Err(error) => {
+                        this.message = Some(format!("File search unavailable: {error}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn move_selection_up(&mut self) {
@@ -130,6 +205,42 @@ impl Spotlight {
         self.move_count += 1;
     }
 
+    fn on_results_scroll(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.results.len() <= theme::MAX_VISIBLE_RESULTS {
+            return;
+        }
+
+        self.scroll_remainder += event.delta.pixel_delta(px(theme::RESULT_ROW_HEIGHT)).y;
+        let threshold = px(theme::RESULT_ROW_HEIGHT / 2.);
+        let steps = (self.scroll_remainder.abs() / threshold).floor() as usize;
+        if steps == 0 {
+            return;
+        }
+
+        let scroll_down = self.scroll_remainder < Pixels::ZERO;
+        if scroll_down {
+            self.scroll_remainder += threshold * steps;
+        } else {
+            self.scroll_remainder -= threshold * steps;
+        }
+
+        if scroll_results(
+            &mut self.selected,
+            &mut self.visible_start,
+            self.results.len(),
+            scroll_down,
+            steps,
+        ) {
+            self.move_count += 1;
+            cx.notify();
+        }
+    }
+
     fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         match event.keystroke.key.as_ref() {
@@ -142,19 +253,12 @@ impl Spotlight {
                     self.query.pop();
                 }
                 self.marked_range = None;
-                self.refilter();
+                self.query_changed(cx);
                 self.reset_caret_blink();
             }
             "escape" => cx.hide(),
             "enter" => {
-                if let Some(app) = self.results.get(self.selected) {
-                    match apps::launch(&app.path) {
-                        Ok(()) => cx.hide(),
-                        Err(error) => {
-                            self.message = Some(format!("Could not open {}: {error}", app.name));
-                        }
-                    }
-                }
+                self.open_result(self.selected, cx);
             }
             "up" => self.move_selection_up(),
             "down" => self.move_selection_down(),
@@ -166,7 +270,7 @@ impl Spotlight {
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.query.push_str(&text.replace(['\r', '\n'], " "));
-            self.refilter();
+            self.query_changed(cx);
             self.reset_caret_blink();
             cx.notify();
         }
@@ -178,6 +282,7 @@ impl Spotlight {
             .iter()
             .skip(self.visible_start)
             .take(theme::MAX_VISIBLE_RESULTS)
+            .filter_map(SearchResult::app)
             .filter(|app| app.icon.is_none())
             .filter_map(|app| Some((app.path.clone(), app.icon_path.clone()?)))
             .filter(|(app_path, _)| self.loading_icons.insert(app_path.clone()))
@@ -190,18 +295,50 @@ impl Spotlight {
             cx.spawn(async move |this, cx| {
                 let icon = task.await;
                 let _ = this.update(cx, |this, cx| {
-                    for app in this
-                        .apps
-                        .iter_mut()
-                        .chain(this.results.iter_mut())
-                        .filter(|app| app.path == app_path)
-                    {
+                    for app in this.apps.iter_mut().filter(|app| app.path == app_path) {
                         app.icon.clone_from(&icon);
+                    }
+                    for result in &mut this.results {
+                        if let SearchResult::Application(app) = result
+                            && app.path == app_path
+                        {
+                            app.icon.clone_from(&icon);
+                        }
                     }
                     cx.notify();
                 });
             })
             .detach();
+        }
+    }
+
+    fn select_result(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.results.len() && self.selected != index {
+            self.selected = index;
+            self.move_count += 1;
+            cx.notify();
+        }
+    }
+
+    fn on_result_click(&mut self, index: usize, event: &ClickEvent, cx: &mut Context<Self>) {
+        if !event.standard_click() {
+            return;
+        }
+        self.select_result(index, cx);
+        if event.click_count() >= 2 {
+            self.open_result(index, cx);
+        }
+    }
+
+    fn open_result(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(result) = self.results.get(index) else {
+            return;
+        };
+        let name = result.name().to_string();
+        let path = result.path().to_string();
+        match apps::launch(&path) {
+            Ok(()) => cx.hide(),
+            Err(error) => self.message = Some(format!("Could not open {name}: {error}")),
         }
     }
 }
@@ -220,6 +357,33 @@ fn move_selection_down(selected: &mut usize, visible_start: &mut usize, result_c
             *visible_start = *selected + 1 - theme::MAX_VISIBLE_RESULTS;
         }
     }
+}
+
+fn scroll_results(
+    selected: &mut usize,
+    visible_start: &mut usize,
+    result_count: usize,
+    scroll_down: bool,
+    steps: usize,
+) -> bool {
+    if result_count <= theme::MAX_VISIBLE_RESULTS || steps == 0 {
+        return false;
+    }
+
+    let previous_start = *visible_start;
+    let max_start = result_count - theme::MAX_VISIBLE_RESULTS;
+    *visible_start = if scroll_down {
+        visible_start.saturating_add(steps).min(max_start)
+    } else {
+        visible_start.saturating_sub(steps)
+    };
+    if *visible_start == previous_start {
+        return false;
+    }
+
+    let visible_end = (*visible_start + theme::MAX_VISIBLE_RESULTS - 1).min(result_count - 1);
+    *selected = (*selected).clamp(*visible_start, visible_end);
+    true
 }
 
 fn app_dirs() -> Vec<String> {
@@ -314,7 +478,7 @@ impl EntityInputHandler for Spotlight {
         let text = new_text.replace(['\r', '\n'], " ");
         self.query.replace_range(range, &text);
         self.marked_range = None;
-        self.refilter();
+        self.query_changed(cx);
         self.reset_caret_blink();
         cx.notify();
     }
@@ -335,7 +499,7 @@ impl EntityInputHandler for Spotlight {
         let start = range.start;
         self.query.replace_range(range, new_text);
         self.marked_range = (!new_text.is_empty()).then_some(start..start + new_text.len());
-        self.refilter();
+        self.query_changed(cx);
         self.reset_caret_blink();
         cx.notify();
     }
@@ -533,20 +697,40 @@ impl Render for Spotlight {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.queue_visible_icons(cx);
 
-        let rows: Vec<_> = self
+        let visible_results: Vec<_> = self
             .results
             .iter()
             .enumerate()
             .skip(self.visible_start)
             .take(theme::MAX_VISIBLE_RESULTS)
-            .map(|(index, app)| {
-                ui::result_row::result_row(app, index == self.selected, self.move_count)
-                    .into_any_element()
+            .map(|(index, result)| (index, result.clone()))
+            .collect();
+        let selected = self.selected;
+        let move_count = self.move_count;
+        let rows: Vec<_> = visible_results
+            .into_iter()
+            .map(|(index, result)| {
+                ui::result_row::result_row(
+                    &result,
+                    index,
+                    index == selected,
+                    move_count,
+                    cx.listener(move |this, hovered, _window, cx| {
+                        if *hovered {
+                            this.select_result(index, cx);
+                        }
+                    }),
+                    cx.listener(move |this, event, _window, cx| {
+                        this.on_result_click(index, event, cx);
+                    }),
+                )
             })
             .collect();
 
         let body = if self.loading {
             ui::empty_state("Finding applications…")
+        } else if rows.is_empty() && self.files_loading {
+            ui::empty_state("Searching files…")
         } else if rows.is_empty() {
             ui::empty_state("No results")
         } else {
@@ -572,7 +756,7 @@ impl Render for Spotlight {
                     .child(ui::input_field(SearchTextElement {
                         spotlight: cx.entity(),
                     }))
-                    .child(body)
+                    .child(body.on_scroll_wheel(cx.listener(Self::on_results_scroll)))
                     .child(ui::footer(
                         self.message.as_deref().or(self.shortcut_error.as_deref()),
                     )),
@@ -616,6 +800,55 @@ mod tests {
         }
         assert_eq!(selected, 2);
         assert_eq!(visible_start, 2);
+    }
+
+    #[test]
+    fn mouse_scroll_moves_window_and_keeps_selection_visible() {
+        let mut selected = 0;
+        let mut visible_start = 0;
+
+        assert!(scroll_results(
+            &mut selected,
+            &mut visible_start,
+            20,
+            true,
+            3,
+        ));
+        assert_eq!(visible_start, 3);
+        assert_eq!(selected, 3);
+
+        assert!(scroll_results(
+            &mut selected,
+            &mut visible_start,
+            20,
+            false,
+            2,
+        ));
+        assert_eq!(visible_start, 1);
+        assert_eq!(selected, 3);
+    }
+
+    #[test]
+    fn mouse_scroll_clamps_at_result_boundaries() {
+        let mut selected = 0;
+        let mut visible_start = 0;
+
+        assert!(scroll_results(
+            &mut selected,
+            &mut visible_start,
+            10,
+            true,
+            99,
+        ));
+        assert_eq!(visible_start, 3);
+        assert_eq!(selected, 3);
+        assert!(!scroll_results(
+            &mut selected,
+            &mut visible_start,
+            10,
+            true,
+            1,
+        ));
     }
 
     #[test]
