@@ -16,18 +16,41 @@ use gpui::{
 
 use crate::apps::{self, AppEntry};
 use crate::calculator;
+use crate::clipboard_history::ClipboardHistory;
 use crate::files::{self, FileEntry};
 use crate::fuzzy;
 use crate::results::SearchResult;
 use crate::theme::{self, Theme};
 use crate::ui;
 
-actions!(search_input, [Paste]);
+actions!(
+    search_input,
+    [
+        Paste,
+        OpenClipboardHistory,
+        DeleteClipboardEntry,
+        ClearClipboardHistory
+    ]
+);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchMode {
+    Applications,
+    Clipboard,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PendingClipboardAction {
+    Delete(u64),
+    Clear,
+}
 
 pub struct Spotlight {
     pub focus: FocusHandle,
     query: String,
+    mode: SearchMode,
     apps: Vec<AppEntry>,
+    clipboard_history: ClipboardHistory,
     files: Vec<FileEntry>,
     results: Vec<SearchResult>,
     selected: usize,
@@ -41,6 +64,7 @@ pub struct Spotlight {
     message: Option<String>,
     shortcut_error: Option<String>,
     shortcut_label: String,
+    pending_clipboard_action: Option<PendingClipboardAction>,
     marked_range: Option<Range<usize>>,
     last_input_layout: Option<ShapedLine>,
     last_input_bounds: Option<Bounds<Pixels>>,
@@ -68,7 +92,9 @@ impl Spotlight {
         Self {
             focus: cx.focus_handle(),
             query: String::new(),
+            mode: SearchMode::Applications,
             apps: Vec::new(),
+            clipboard_history: ClipboardHistory::default(),
             files: Vec::new(),
             results: Vec::new(),
             selected: 0,
@@ -82,6 +108,7 @@ impl Spotlight {
             message: None,
             shortcut_error: None,
             shortcut_label,
+            pending_clipboard_action: None,
             marked_range: None,
             last_input_layout: None,
             last_input_bounds: None,
@@ -91,11 +118,13 @@ impl Spotlight {
 
     pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.clear();
+        self.mode = SearchMode::Applications;
         self.files.clear();
         self.file_request_id.fetch_add(1, Ordering::Relaxed);
         self.files_loading = false;
         self.marked_range = None;
         self.message = None;
+        self.pending_clipboard_action = None;
         self.refilter();
         self.reset_caret_blink();
         self.focus.focus(window);
@@ -108,6 +137,13 @@ impl Spotlight {
         cx.notify();
     }
 
+    pub fn capture_clipboard(&mut self, text: String, cx: &mut Context<Self>) {
+        if self.clipboard_history.capture(text) && self.mode == SearchMode::Clipboard {
+            self.refilter();
+            cx.notify();
+        }
+    }
+
     fn reset_caret_blink(&mut self) {
         self.caret_blink_started = Instant::now();
     }
@@ -117,6 +153,17 @@ impl Spotlight {
     }
 
     fn refilter(&mut self) {
+        if self.mode == SearchMode::Clipboard {
+            self.results = self
+                .clipboard_history
+                .search(&self.query)
+                .into_iter()
+                .map(SearchResult::Clipboard)
+                .collect();
+            self.reset_result_window();
+            return;
+        }
+
         if self.query.is_empty() {
             self.results = self
                 .apps
@@ -148,10 +195,15 @@ impl Spotlight {
                 .chain(self.files.iter().cloned().map(SearchResult::File))
                 .collect();
         }
+        self.reset_result_window();
+    }
+
+    fn reset_result_window(&mut self) {
         self.selected = 0;
         self.visible_start = 0;
         self.scroll_remainder = Pixels::ZERO;
         self.message = None;
+        self.pending_clipboard_action = None;
     }
 
     fn query_changed(&mut self, cx: &mut Context<Self>) {
@@ -161,6 +213,11 @@ impl Spotlight {
         let query = self.query.trim().to_string();
         self.files_loading = !query.is_empty();
         self.refilter();
+
+        if self.mode == SearchMode::Clipboard {
+            self.files_loading = false;
+            return;
+        }
 
         if query.is_empty() || calculator::evaluate(&query).is_some() {
             self.files_loading = false;
@@ -205,6 +262,7 @@ impl Spotlight {
 
     fn move_selection_up(&mut self) {
         move_selection_up(&mut self.selected, &mut self.visible_start);
+        self.pending_clipboard_action = None;
         self.move_count += 1;
     }
 
@@ -217,11 +275,16 @@ impl Spotlight {
             visible_limit,
         );
         self.keep_selection_visible();
+        self.pending_clipboard_action = None;
         self.move_count += 1;
     }
 
     fn visible_limit(&self) -> usize {
-        visible_result_limit(&self.results, self.visible_start)
+        if self.mode == SearchMode::Clipboard {
+            theme::MULTI_GROUP_VISIBLE_RESULTS
+        } else {
+            visible_result_limit(&self.results, self.visible_start)
+        }
     }
 
     fn keep_selection_visible(&mut self) {
@@ -277,18 +340,29 @@ impl Spotlight {
         let modifiers = event.keystroke.modifiers;
         match event.keystroke.key.as_ref() {
             "backspace" => {
-                if modifiers.platform {
-                    self.query.clear();
-                } else if modifiers.alt {
-                    delete_word(&mut self.query);
-                } else {
-                    self.query.pop();
+                let clipboard_action = self.mode == SearchMode::Clipboard
+                    && self.query.is_empty()
+                    && modifiers.platform;
+                if !clipboard_action {
+                    if modifiers.platform {
+                        self.query.clear();
+                    } else if modifiers.alt {
+                        delete_word(&mut self.query);
+                    } else {
+                        self.query.pop();
+                    }
+                    self.marked_range = None;
+                    self.query_changed(cx);
+                    self.reset_caret_blink();
                 }
-                self.marked_range = None;
-                self.query_changed(cx);
-                self.reset_caret_blink();
             }
-            "escape" => cx.hide(),
+            "escape" => {
+                if self.mode == SearchMode::Clipboard {
+                    self.show_application_search(cx);
+                } else {
+                    cx.hide();
+                }
+            }
             "enter" => {
                 self.open_result(self.selected, cx);
             }
@@ -306,6 +380,93 @@ impl Spotlight {
             self.reset_caret_blink();
             cx.notify();
         }
+    }
+
+    fn open_clipboard_history(
+        &mut self,
+        _: &OpenClipboardHistory,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode == SearchMode::Clipboard {
+            self.show_application_search(cx);
+        } else {
+            self.mode = SearchMode::Clipboard;
+            self.query.clear();
+            self.files.clear();
+            self.file_request_id.fetch_add(1, Ordering::Relaxed);
+            self.files_loading = false;
+            self.marked_range = None;
+            self.refilter();
+            self.reset_caret_blink();
+            cx.notify();
+        }
+    }
+
+    fn delete_clipboard_entry(
+        &mut self,
+        _: &DeleteClipboardEntry,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode == SearchMode::Clipboard && self.query.is_empty() {
+            self.request_delete_selected(cx);
+        }
+    }
+
+    fn clear_clipboard_history(
+        &mut self,
+        _: &ClearClipboardHistory,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode == SearchMode::Clipboard && self.query.is_empty() {
+            self.request_clear_clipboard(cx);
+        }
+    }
+
+    fn show_application_search(&mut self, cx: &mut Context<Self>) {
+        self.mode = SearchMode::Applications;
+        self.query.clear();
+        self.marked_range = None;
+        self.refilter();
+        self.reset_caret_blink();
+        cx.notify();
+    }
+
+    fn request_delete_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self
+            .results
+            .get(self.selected)
+            .and_then(SearchResult::clipboard_entry)
+            .map(|entry| entry.id)
+        else {
+            return;
+        };
+        self.request_delete_clipboard(id, cx);
+    }
+
+    fn request_delete_clipboard(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.pending_clipboard_action == Some(PendingClipboardAction::Delete(id)) {
+            self.clipboard_history.delete(id);
+            self.refilter();
+        } else {
+            self.pending_clipboard_action = Some(PendingClipboardAction::Delete(id));
+        }
+        cx.notify();
+    }
+
+    fn request_clear_clipboard(&mut self, cx: &mut Context<Self>) {
+        if self.clipboard_history.is_empty() {
+            return;
+        }
+        if self.pending_clipboard_action == Some(PendingClipboardAction::Clear) {
+            self.clipboard_history.clear();
+            self.refilter();
+        } else {
+            self.pending_clipboard_action = Some(PendingClipboardAction::Clear);
+        }
+        cx.notify();
     }
 
     fn queue_visible_icons(&mut self, cx: &mut Context<Self>) {
@@ -384,6 +545,7 @@ impl Spotlight {
     fn select_result(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.results.len() && self.selected != index {
             self.selected = index;
+            self.pending_clipboard_action = None;
             self.move_count += 1;
             cx.notify();
         }
@@ -405,6 +567,11 @@ impl Spotlight {
         };
         if let Some(value) = result.calculation_result() {
             cx.write_to_clipboard(ClipboardItem::new_string(value.to_string()));
+            cx.hide();
+            return;
+        }
+        if let Some(entry) = result.clipboard_entry() {
+            cx.write_to_clipboard(ClipboardItem::new_string(entry.text.clone()));
             cx.hide();
             return;
         }
@@ -712,7 +879,15 @@ impl Element for SearchTextElement {
     ) -> Self::PrepaintState {
         let spotlight = self.spotlight.read(cx);
         let (text, color): (SharedString, Hsla) = if spotlight.query.is_empty() {
-            ("Search applications…".into(), Theme::PLACEHOLDER.into())
+            (
+                if spotlight.mode == SearchMode::Clipboard {
+                    "Search clipboard history…"
+                } else {
+                    "Search applications…"
+                }
+                .into(),
+                Theme::PLACEHOLDER.into(),
+            )
         } else {
             (spotlight.query.clone().into(), Theme::INPUT_TEXT.into())
         };
@@ -796,6 +971,7 @@ impl Render for Spotlight {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.queue_visible_icons(cx);
 
+        let clipboard_mode = self.mode == SearchMode::Clipboard;
         let visible_limit = self.visible_limit();
         let visible_results: Vec<_> = self
             .results
@@ -807,19 +983,27 @@ impl Render for Spotlight {
             .collect();
         let selected = self.selected;
         let move_count = self.move_count;
+        let pending_clipboard_action = self.pending_clipboard_action;
         let mut rows = Vec::new();
         let mut previous_kind = None;
         for (index, result) in visible_results {
             let kind = result.kind();
-            if previous_kind != Some(kind) {
+            if !clipboard_mode && previous_kind != Some(kind) {
                 rows.push(ui::section_header(kind.label()).into_any_element());
                 previous_kind = Some(kind);
             }
+            let clipboard_id = result.clipboard_entry().map(|entry| entry.id);
+            let delete_confirmation = clipboard_id.is_some_and(|id| {
+                pending_clipboard_action == Some(PendingClipboardAction::Delete(id))
+            });
             rows.push(ui::result_row::result_row(
                 &result,
                 index,
-                index == selected,
-                move_count,
+                ui::result_row::ResultRowState {
+                    selected: index == selected,
+                    move_count,
+                    delete_confirmation,
+                },
                 cx.listener(move |this, hovered, _window, cx| {
                     if *hovered {
                         this.select_result(index, cx);
@@ -828,10 +1012,19 @@ impl Render for Spotlight {
                 cx.listener(move |this, event, _window, cx| {
                     this.on_result_click(index, event, cx);
                 }),
+                cx.listener(move |this, _event, _window, cx| {
+                    if let Some(id) = clipboard_id {
+                        this.request_delete_clipboard(id, cx);
+                    }
+                }),
             ));
         }
 
-        let body = if self.loading {
+        let body = if clipboard_mode && self.clipboard_history.is_empty() {
+            ui::empty_state("Clipboard history is empty.")
+        } else if clipboard_mode && rows.is_empty() {
+            ui::empty_state("No clipboard matches.")
+        } else if self.loading {
             ui::empty_state("Finding applications…")
         } else if rows.is_empty() && self.files_loading {
             ui::empty_state("Searching files…")
@@ -846,6 +1039,9 @@ impl Render for Spotlight {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::open_clipboard_history))
+            .on_action(cx.listener(Self::delete_clipboard_entry))
+            .on_action(cx.listener(Self::clear_clipboard_history))
             .size_full()
             .p_2()
             .child(
@@ -860,10 +1056,20 @@ impl Render for Spotlight {
                     .child(ui::input_field(SearchTextElement {
                         spotlight: cx.entity(),
                     }))
+                    .when(clipboard_mode, |panel| {
+                        panel.child(ui::clipboard_toolbar(
+                            self.clipboard_history.len(),
+                            self.pending_clipboard_action == Some(PendingClipboardAction::Clear),
+                            cx.listener(|this, _event, _window, cx| {
+                                this.request_clear_clipboard(cx);
+                            }),
+                        ))
+                    })
                     .child(body.on_scroll_wheel(cx.listener(Self::on_results_scroll)))
                     .child(ui::footer(
                         self.message.as_deref().or(self.shortcut_error.as_deref()),
                         &self.shortcut_label,
+                        clipboard_mode,
                     )),
             )
             .with_animation(

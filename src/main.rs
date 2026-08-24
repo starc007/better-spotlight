@@ -1,5 +1,6 @@
 mod apps;
 mod calculator;
+mod clipboard_history;
 mod config;
 mod files;
 mod fuzzy;
@@ -25,7 +26,12 @@ impl Global for HotKeyRegistration {}
 fn main() {
     let shortcut = config::load_shortcut();
     Application::new().run(move |cx: &mut App| {
-        cx.bind_keys([KeyBinding::new("cmd-v", search::Paste, None)]);
+        cx.bind_keys([
+            KeyBinding::new("cmd-v", search::Paste, None),
+            KeyBinding::new("cmd-shift-v", search::OpenClipboardHistory, None),
+            KeyBinding::new("cmd-backspace", search::DeleteClipboardEntry, None),
+            KeyBinding::new("cmd-shift-backspace", search::ClearClipboardHistory, None),
+        ]);
 
         let hotkey = shortcut.hotkey;
         let hotkey_id = hotkey.id();
@@ -83,6 +89,7 @@ fn main() {
 
         cx.activate(true);
 
+        let clipboard_handle = handle;
         cx.spawn(async move |cx| {
             loop {
                 cx.background_executor()
@@ -102,6 +109,23 @@ fn main() {
                         });
                     }
                 }
+            }
+        })
+        .detach();
+
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(400))
+                    .await;
+                let _ = cx.update(|cx| {
+                    let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+                        return;
+                    };
+                    let _ = clipboard_handle.update(cx, |spotlight, _window, cx| {
+                        spotlight.capture_clipboard(text, cx);
+                    });
+                });
             }
         })
         .detach();

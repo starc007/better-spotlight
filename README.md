@@ -11,6 +11,7 @@ A fast, Raycast-inspired launcher for macOS built with [GPUI](https://gpui.rs) �
 - File and folder search backed by the macOS Spotlight index
 - Finder-native file and folder icons with grouped results
 - Calculator expressions with Enter-to-copy results
+- Private, in-memory clipboard history with search and deletion controls
 - Borderless floating panel, always on top
 - Configurable global shortcut (⌘Space by default)
 
@@ -45,6 +46,17 @@ File results come from the macOS Spotlight index. If expected personal files do
 not appear, allow Better Spotlight under **System Settings → Privacy & Security
 → Files & Folders**, and confirm the location is not excluded from Spotlight.
 
+### Clipboard history
+
+Press **⌘⇧V** while Better Spotlight is open to switch to clipboard history.
+Type to filter captured text, use the arrow keys to navigate, and press Enter to
+copy the selected entry. Press **⌘⌫** twice to delete the selected entry, or use
+the visible Delete and Clear all controls with their confirmation step.
+
+Clipboard history stays in memory, is limited to the 50 most recent unique text
+entries, and is erased when Better Spotlight quits. Images and files are not
+captured.
+
 ## Packaging
 
 Create an ad-hoc signed application bundle and zip archive:
@@ -63,7 +75,7 @@ developer credentials.
 - [x] Global hotkey (⌘Space) toggle
 - [x] File search via Spotlight metadata
 - [x] Calculator
-- [ ] Clipboard history
+- [x] Clipboard history
 - [ ] Plugin system
 
 ## License
