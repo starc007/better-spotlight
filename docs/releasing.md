@@ -18,9 +18,11 @@ not your Apple Account password:
 ```sh
 xcrun notarytool store-credentials "better-spotlight" \
   --apple-id "YOUR_APPLE_ID" \
-  --team-id "PZTKZ6MYVZ" \
-  --password "YOUR_APP_SPECIFIC_PASSWORD"
+  --team-id "PZTKZ6MYVZ"
 ```
+
+Enter the app-specific password at the secure prompt so it is not saved in
+shell history.
 
 Create and validate a release locally:
 

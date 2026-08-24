@@ -1,6 +1,9 @@
-# better-spotlight
+# Better Spotlight
 
-A fast, Raycast-inspired launcher for macOS built with [GPUI](https://gpui.rs) — the GPU-accelerated UI framework behind Zed.
+A fast, native Spotlight replacement for macOS, built with Rust and
+[GPUI](https://gpui.rs)—the GPU-accelerated UI framework behind Zed.
+
+[Download the latest release](https://github.com/starc007/better-spotlight/releases/latest)
 
 ## Features
 
@@ -15,23 +18,60 @@ A fast, Raycast-inspired launcher for macOS built with [GPUI](https://gpui.rs) �
 - Borderless floating panel, always on top
 - Configurable global shortcut (⌘Space by default)
 
-## Building
+## Install
 
-Requires macOS with Xcode and the Metal Toolchain:
+1. Download `Better-Spotlight.dmg` from the
+   [latest GitHub Release](https://github.com/starc007/better-spotlight/releases/latest).
+2. Open the DMG and drag **Better Spotlight** into **Applications**.
+3. Open Better Spotlight once from Applications.
+4. Go to **System Settings → Keyboard → Keyboard Shortcuts → Spotlight** and
+   turn off **Show Spotlight search**.
+5. Press **⌘Space** to open Better Spotlight.
+
+Disabling the shortcut only replaces Apple's Spotlight window. macOS Spotlight
+indexing remains enabled and powers Better Spotlight's file search.
+
+To start Better Spotlight automatically, go to **System Settings → General →
+Login Items & Extensions**, click **+** under **Open at Login**, and select
+Better Spotlight.
+
+## Local setup
+
+Requirements:
+
+- macOS 13 or later
+- Stable Rust toolchain
+- Xcode with the Metal Toolchain
+
+Clone and run the packaged app locally:
 
 ```sh
+git clone https://github.com/starc007/better-spotlight.git
+cd better-spotlight
+rustup default stable
 xcodebuild -downloadComponent MetalToolchain
 ./scripts/run-local.sh
 ```
 
 This builds and opens the local `.app` bundle, so macOS loads the app name,
 icon, and other bundle metadata. Use `cargo run` only for a faster raw-binary
-development cycle; a raw executable does not have a macOS app icon.
+development cycle; a raw executable does not include the macOS app icon or
+other bundle metadata.
 
 Better Spotlight registers ⌘Space when it starts. macOS owns that shortcut by
 default, so disable **System Settings → Keyboard → Keyboard Shortcuts → Spotlight
 → Show Spotlight search** before launching the app. If registration fails, the
 launcher remains usable and shows the reason in its footer.
+
+Run the complete validation suite:
+
+```sh
+cargo fmt --check
+cargo test
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+## Configuration
 
 ### Custom shortcut
 
@@ -61,7 +101,7 @@ Clipboard history stays in memory, is limited to the 50 most recent unique text
 entries, and is erased when Better Spotlight quits. Images and files are not
 captured.
 
-## Packaging
+## Package locally
 
 Create an ad-hoc signed application bundle and zip archive:
 
