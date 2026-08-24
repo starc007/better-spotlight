@@ -81,9 +81,31 @@ pub fn result_row(
 
 fn result_icon(result: &SearchResult) -> Div {
     match result {
+        SearchResult::Calculation { .. } => calculation_tile(),
         SearchResult::Application(app) => icon_element(app),
-        SearchResult::File(file) => file_tile(&file.name),
+        SearchResult::File(file) => match &file.icon {
+            Some(icon) => div()
+                .size(px(theme::ICON_SIZE))
+                .flex_shrink_0()
+                .child(img(icon.clone()).size(px(theme::ICON_SIZE))),
+            None => file_tile(&file.name, file.is_directory),
+        },
     }
+}
+
+fn calculation_tile() -> Div {
+    div()
+        .flex_shrink_0()
+        .size(px(theme::ICON_SIZE))
+        .rounded(px(7.))
+        .bg(gpui::rgb(0x2b2e38))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(18.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(Theme::RESULT_TEXT)
+        .child("=")
 }
 
 /// Returns `color` with its alpha channel set to `alpha`.
@@ -101,13 +123,13 @@ fn icon_element(app: &AppEntry) -> Div {
     }
 }
 
-fn file_tile(name: &str) -> Div {
+fn file_tile(name: &str, is_directory: bool) -> Div {
     let extension = std::path::Path::new(name)
         .extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| extension.chars().take(3).collect::<String>().to_uppercase())
         .filter(|extension| !extension.is_empty())
-        .unwrap_or_else(|| "FILE".to_string());
+        .unwrap_or_else(|| if is_directory { "DIR" } else { "FILE" }.to_string());
 
     div()
         .flex_shrink_0()

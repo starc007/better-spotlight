@@ -1,4 +1,6 @@
 mod apps;
+mod calculator;
+mod config;
 mod files;
 mod fuzzy;
 mod results;
@@ -8,10 +10,7 @@ mod ui;
 
 use std::time::Duration;
 
-use global_hotkey::{
-    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-    hotkey::{Code, HotKey, Modifiers},
-};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use gpui::{
     App, AppContext, Application, Bounds, Global, KeyBinding, Point, WindowBackgroundAppearance,
     WindowBounds, WindowKind, WindowOptions, px, size,
@@ -24,19 +23,24 @@ struct HotKeyRegistration {
 impl Global for HotKeyRegistration {}
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    let shortcut = config::load_shortcut();
+    Application::new().run(move |cx: &mut App| {
         cx.bind_keys([KeyBinding::new("cmd-v", search::Paste, None)]);
 
-        let hotkey = HotKey::new(Some(Modifiers::META), Code::Space);
+        let hotkey = shortcut.hotkey;
         let hotkey_id = hotkey.id();
         let hotkey_error = match GlobalHotKeyManager::new() {
             Ok(manager) => match manager.register(hotkey) {
                 Ok(()) => {
                     cx.set_global(HotKeyRegistration { _manager: manager });
-                    None
+                    shortcut.warning.clone()
                 }
                 Err(error) => Some(format!(
-                    "⌘Space is unavailable ({error}). Disable the macOS Spotlight shortcut first."
+                    "{} is unavailable ({error}). Change it in {}.",
+                    shortcut.label,
+                    config::config_path()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "BETTER_SPOTLIGHT_SHORTCUT".into())
                 )),
             },
             Err(error) => Some(format!("Could not initialize the global shortcut: {error}")),
@@ -67,7 +71,8 @@ fn main() {
 
         let handle = cx
             .open_window(options, |window, cx| {
-                let view = cx.new(search::Spotlight::new);
+                let shortcut_label = shortcut.label.clone();
+                let view = cx.new(|cx| search::Spotlight::new(cx, shortcut_label));
                 view.read(cx).focus.clone().focus(window);
                 if let Some(error) = hotkey_error {
                     view.update(cx, |spotlight, cx| spotlight.set_shortcut_error(error, cx));
