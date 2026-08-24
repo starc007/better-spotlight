@@ -21,8 +21,12 @@ Requires macOS with Xcode and the Metal Toolchain:
 
 ```sh
 xcodebuild -downloadComponent MetalToolchain
-cargo run
+./scripts/run-local.sh
 ```
+
+This builds and opens the local `.app` bundle, so macOS loads the app name,
+icon, and other bundle metadata. Use `cargo run` only for a faster raw-binary
+development cycle; a raw executable does not have a macOS app icon.
 
 Better Spotlight registers ⌘Space when it starts. macOS owns that shortcut by
 default, so disable **System Settings → Keyboard → Keyboard Shortcuts → Spotlight
@@ -66,9 +70,10 @@ Create an ad-hoc signed application bundle and zip archive:
 open "dist/Better Spotlight.app"
 ```
 
-For distribution, provide a Developer ID identity through
-`CODESIGN_IDENTITY`, then notarize the generated archive with your Apple
-developer credentials.
+Public releases are distributed as a universal, Developer ID-signed and
+notarized DMG attached to GitHub Releases. Signing and notarization happen
+locally so Apple credentials never leave the release Mac. See
+[docs/releasing.md](docs/releasing.md) for the release process.
 
 ## Roadmap
 

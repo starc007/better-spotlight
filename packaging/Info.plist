@@ -10,6 +10,8 @@
     <string>better-spotlight</string>
     <key>CFBundleIdentifier</key>
     <string>com.better-spotlight.app</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
