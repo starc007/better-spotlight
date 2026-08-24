@@ -1,6 +1,6 @@
 [package]
 name = "better-spotlight"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -10,7 +10,7 @@ image = "0.25"
 icns = "0.3"
 plist = "1.10"
 objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSImage", "NSWorkspace"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSImage", "NSRunningApplication", "NSWorkspace"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSString"] }
 
 [profile.release]
