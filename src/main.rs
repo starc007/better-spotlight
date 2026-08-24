@@ -28,6 +28,7 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         cx.bind_keys([
             KeyBinding::new("cmd-v", search::Paste, None),
+            KeyBinding::new("cmd-a", search::SelectAllInput, None),
             KeyBinding::new("cmd-shift-v", search::OpenClipboardHistory, None),
             KeyBinding::new("cmd-backspace", search::DeleteClipboardEntry, None),
             KeyBinding::new("cmd-shift-backspace", search::ClearClipboardHistory, None),
@@ -80,6 +81,14 @@ fn main() {
                 let shortcut_label = shortcut.label.clone();
                 let view = cx.new(|cx| search::Spotlight::new(cx, shortcut_label));
                 view.read(cx).focus.clone().focus(window);
+                view.update(cx, |_spotlight, cx| {
+                    cx.observe_window_activation(window, |_spotlight, window, cx| {
+                        if !window.is_window_active() {
+                            cx.hide();
+                        }
+                    })
+                    .detach();
+                });
                 if let Some(error) = hotkey_error {
                     view.update(cx, |spotlight, cx| spotlight.set_shortcut_error(error, cx));
                 }
