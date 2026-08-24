@@ -1,6 +1,6 @@
 pub mod result_row;
 
-use gpui::{AnyElement, Div, div, prelude::*, px};
+use gpui::{AnyElement, App, ClickEvent, Div, Window, div, prelude::*, px};
 
 use crate::theme::Theme;
 
@@ -39,6 +39,54 @@ pub fn section_header(label: &str) -> Div {
         .child(label.to_string())
 }
 
+pub fn clipboard_toolbar(
+    entry_count: usize,
+    clear_confirmation: bool,
+    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    div()
+        .h(px(40.))
+        .px_5()
+        .flex()
+        .items_center()
+        .text_size(px(10.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(Theme::FOOTER_TEXT)
+        .child(format!(
+            "CLIPBOARD HISTORY · {entry_count} {}",
+            if entry_count == 1 { "ITEM" } else { "ITEMS" }
+        ))
+        .child(div().flex_1())
+        .when(entry_count > 0, |toolbar| {
+            toolbar.child(
+                div()
+                    .id("clear-clipboard")
+                    .h(px(40.))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_size(px(12.))
+                    .font_weight(gpui::FontWeight::NORMAL)
+                    .text_color(if clear_confirmation {
+                        gpui::rgb(0xff7b72)
+                    } else {
+                        Theme::RESULT_META
+                    })
+                    .hover(|style| style.bg(gpui::rgb(0x22242b)))
+                    .active(|style| style.opacity(0.82))
+                    .on_click(on_clear)
+                    .child(if clear_confirmation {
+                        "Confirm clear"
+                    } else {
+                        "Clear all"
+                    }),
+            )
+        })
+}
+
 pub fn empty_state(message: &str) -> Div {
     div()
         .flex()
@@ -50,7 +98,7 @@ pub fn empty_state(message: &str) -> Div {
         .child(message.to_string())
 }
 
-pub fn footer(message: Option<&str>, shortcut: &str) -> Div {
+pub fn footer(message: Option<&str>, shortcut: &str, clipboard_mode: bool) -> Div {
     let footer = div()
         .mt_auto()
         .flex()
@@ -63,7 +111,7 @@ pub fn footer(message: Option<&str>, shortcut: &str) -> Div {
         .text_size(px(12.))
         .text_color(Theme::FOOTER_TEXT);
 
-    footer
+    let footer = footer
         .when_some(message, |footer, message| {
             footer.child(
                 div()
@@ -72,11 +120,22 @@ pub fn footer(message: Option<&str>, shortcut: &str) -> Div {
                     .child(message.to_string()),
             )
         })
-        .when(message.is_none(), |footer| footer.child(div().flex_1()))
-        .child(hint(shortcut, "Toggle"))
-        .child(hint("↑↓", "Navigate"))
-        .child(hint("↵", "Open"))
-        .child(hint("esc", "Close"))
+        .when(message.is_none(), |footer| footer.child(div().flex_1()));
+
+    if clipboard_mode {
+        footer
+            .child(hint("↑↓", "Navigate"))
+            .child(hint("↵", "Copy"))
+            .child(hint("⌘⌫", "Delete"))
+            .child(hint("esc", "Back"))
+    } else {
+        footer
+            .child(hint(shortcut, "Toggle"))
+            .child(hint("⌘⇧V", "Clipboard"))
+            .child(hint("↑↓", "Navigate"))
+            .child(hint("↵", "Open"))
+            .child(hint("esc", "Close"))
+    }
 }
 
 fn hint(key: &str, label: &str) -> impl IntoElement {

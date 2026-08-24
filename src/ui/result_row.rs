@@ -7,14 +7,26 @@ use crate::apps::AppEntry;
 use crate::results::SearchResult;
 use crate::theme::{self, Theme};
 
+pub struct ResultRowState {
+    pub selected: bool,
+    pub move_count: u64,
+    pub delete_confirmation: bool,
+}
+
 pub fn result_row(
     result: &SearchResult,
     index: usize,
-    selected: bool,
-    move_count: u64,
+    state: ResultRowState,
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_delete: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
+    let ResultRowState {
+        selected,
+        move_count,
+        delete_confirmation,
+    } = state;
+    let show_delete = selected && result.clipboard_entry().is_some();
     let row = div()
         .id(("result-row", index))
         .flex()
@@ -62,7 +74,34 @@ pub fn result_row(
                             .child(subtitle.to_string()),
                     )
                 }),
-        );
+        )
+        .when(show_delete, |row| {
+            row.child(
+                div()
+                    .id(("delete-clipboard", index))
+                    .h(px(40.))
+                    .px_3()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_size(px(12.))
+                    .text_color(Theme::SELECTED_TEXT)
+                    .hover(|style| style.bg(gpui::rgba(0xffffff18)))
+                    .active(|style| style.opacity(0.82))
+                    .on_click(move |event, window, cx| {
+                        cx.stop_propagation();
+                        on_delete(event, window, cx);
+                    })
+                    .child(if delete_confirmation {
+                        "Confirm"
+                    } else {
+                        "Delete"
+                    }),
+            )
+        });
 
     if selected {
         row.with_animation(
@@ -82,6 +121,7 @@ pub fn result_row(
 fn result_icon(result: &SearchResult) -> Div {
     match result {
         SearchResult::Calculation { .. } => calculation_tile(),
+        SearchResult::Clipboard(_) => clipboard_tile(),
         SearchResult::Application(app) => icon_element(app),
         SearchResult::File(file) => match &file.icon {
             Some(icon) => div()
@@ -91,6 +131,21 @@ fn result_icon(result: &SearchResult) -> Div {
             None => file_tile(&file.name, file.is_directory),
         },
     }
+}
+
+fn clipboard_tile() -> Div {
+    div()
+        .flex_shrink_0()
+        .size(px(theme::ICON_SIZE))
+        .rounded(px(7.))
+        .bg(gpui::rgb(0x2b2e38))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(15.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(Theme::RESULT_TEXT)
+        .child("⌘")
 }
 
 fn calculation_tile() -> Div {
