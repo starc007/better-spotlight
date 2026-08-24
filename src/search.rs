@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use gpui::{
     Animation, AnimationExt, App, Bounds, ClickEvent, Context, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, KeyDownEvent, LayoutId, PaintQuad, Pixels, Render, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, Window, actions, div, fill, point, prelude::*,
-    px, relative, size,
+    InspectorElementId, IntoElement, KeyDownEvent, LayoutId, PaintQuad, Pixels, Render,
+    ScrollWheelEvent, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window, actions,
+    div, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::apps::{self, AppEntry};
@@ -31,6 +31,7 @@ pub struct Spotlight {
     results: Vec<SearchResult>,
     selected: usize,
     visible_start: usize,
+    scroll_remainder: Pixels,
     move_count: u64,
     loading: bool,
     files_loading: bool,
@@ -70,6 +71,7 @@ impl Spotlight {
             results: Vec::new(),
             selected: 0,
             visible_start: 0,
+            scroll_remainder: Pixels::ZERO,
             move_count: 0,
             loading: true,
             files_loading: false,
@@ -137,6 +139,7 @@ impl Spotlight {
         }
         self.selected = 0;
         self.visible_start = 0;
+        self.scroll_remainder = Pixels::ZERO;
         self.message = None;
     }
 
@@ -200,6 +203,42 @@ impl Spotlight {
             self.results.len(),
         );
         self.move_count += 1;
+    }
+
+    fn on_results_scroll(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.results.len() <= theme::MAX_VISIBLE_RESULTS {
+            return;
+        }
+
+        self.scroll_remainder += event.delta.pixel_delta(px(theme::RESULT_ROW_HEIGHT)).y;
+        let threshold = px(theme::RESULT_ROW_HEIGHT / 2.);
+        let steps = (self.scroll_remainder.abs() / threshold).floor() as usize;
+        if steps == 0 {
+            return;
+        }
+
+        let scroll_down = self.scroll_remainder < Pixels::ZERO;
+        if scroll_down {
+            self.scroll_remainder += threshold * steps;
+        } else {
+            self.scroll_remainder -= threshold * steps;
+        }
+
+        if scroll_results(
+            &mut self.selected,
+            &mut self.visible_start,
+            self.results.len(),
+            scroll_down,
+            steps,
+        ) {
+            self.move_count += 1;
+            cx.notify();
+        }
     }
 
     fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -318,6 +357,33 @@ fn move_selection_down(selected: &mut usize, visible_start: &mut usize, result_c
             *visible_start = *selected + 1 - theme::MAX_VISIBLE_RESULTS;
         }
     }
+}
+
+fn scroll_results(
+    selected: &mut usize,
+    visible_start: &mut usize,
+    result_count: usize,
+    scroll_down: bool,
+    steps: usize,
+) -> bool {
+    if result_count <= theme::MAX_VISIBLE_RESULTS || steps == 0 {
+        return false;
+    }
+
+    let previous_start = *visible_start;
+    let max_start = result_count - theme::MAX_VISIBLE_RESULTS;
+    *visible_start = if scroll_down {
+        visible_start.saturating_add(steps).min(max_start)
+    } else {
+        visible_start.saturating_sub(steps)
+    };
+    if *visible_start == previous_start {
+        return false;
+    }
+
+    let visible_end = (*visible_start + theme::MAX_VISIBLE_RESULTS - 1).min(result_count - 1);
+    *selected = (*selected).clamp(*visible_start, visible_end);
+    true
 }
 
 fn app_dirs() -> Vec<String> {
@@ -690,7 +756,7 @@ impl Render for Spotlight {
                     .child(ui::input_field(SearchTextElement {
                         spotlight: cx.entity(),
                     }))
-                    .child(body)
+                    .child(body.on_scroll_wheel(cx.listener(Self::on_results_scroll)))
                     .child(ui::footer(
                         self.message.as_deref().or(self.shortcut_error.as_deref()),
                     )),
@@ -734,6 +800,55 @@ mod tests {
         }
         assert_eq!(selected, 2);
         assert_eq!(visible_start, 2);
+    }
+
+    #[test]
+    fn mouse_scroll_moves_window_and_keeps_selection_visible() {
+        let mut selected = 0;
+        let mut visible_start = 0;
+
+        assert!(scroll_results(
+            &mut selected,
+            &mut visible_start,
+            20,
+            true,
+            3,
+        ));
+        assert_eq!(visible_start, 3);
+        assert_eq!(selected, 3);
+
+        assert!(scroll_results(
+            &mut selected,
+            &mut visible_start,
+            20,
+            false,
+            2,
+        ));
+        assert_eq!(visible_start, 1);
+        assert_eq!(selected, 3);
+    }
+
+    #[test]
+    fn mouse_scroll_clamps_at_result_boundaries() {
+        let mut selected = 0;
+        let mut visible_start = 0;
+
+        assert!(scroll_results(
+            &mut selected,
+            &mut visible_start,
+            10,
+            true,
+            99,
+        ));
+        assert_eq!(visible_start, 3);
+        assert_eq!(selected, 3);
+        assert!(!scroll_results(
+            &mut selected,
+            &mut visible_start,
+            10,
+            true,
+            1,
+        ));
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub const WINDOW_WIDTH: f32 = 720.0;
 pub const WINDOW_HEIGHT: f32 = 460.0;
 pub const MAX_VISIBLE_RESULTS: usize = 7;
 pub const ICON_SIZE: f32 = 32.0;
+pub const RESULT_ROW_HEIGHT: f32 = 44.0;
 
 const fn hex_rgb(hex: u32) -> Rgba {
     let b = (hex & 0xff) as f32 / 255.0;

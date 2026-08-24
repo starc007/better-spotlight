@@ -20,7 +20,7 @@ pub fn result_row(
         .flex()
         .items_center()
         .gap_3()
-        .h(px(44.))
+        .h(px(theme::RESULT_ROW_HEIGHT))
         .px_3()
         .py_1p5()
         .rounded_lg()
