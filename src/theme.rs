@@ -18,6 +18,7 @@ impl Theme {
     pub const INPUT_TEXT: Rgba = hex_rgb(0xf2f3f5);
     pub const PLACEHOLDER: Rgba = hex_rgb(0x6b6f7b);
     pub const RESULT_TEXT: Rgba = hex_rgb(0xc9ccd4);
+    pub const RESULT_META: Rgba = hex_rgb(0x777b87);
     pub const SELECTED_BG: Rgba = hex_rgb(0x27408f);
     pub const SELECTED_TEXT: Rgba = hex_rgb(0xffffff);
     pub const CARET: Rgba = hex_rgb(0x8b8e97);

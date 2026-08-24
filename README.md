@@ -7,6 +7,8 @@ A fast, Raycast-inspired launcher for macOS built with [GPUI](https://gpui.rs) �
 - Instant fuzzy search over your applications
 - Real app icons decoded from `.icns` bundles
 - Keyboard-first: type to search, arrows to navigate, Enter to launch
+- Mouse support with hover selection and double-click launch
+- File and folder search backed by the macOS Spotlight index
 - Borderless floating panel, always on top
 - Global ⌘Space toggle
 
@@ -40,7 +42,7 @@ developer credentials.
 ## Roadmap
 
 - [x] Global hotkey (⌘Space) toggle
-- [ ] File search via Spotlight metadata / custom index
+- [x] File search via Spotlight metadata
 - [ ] Calculator, clipboard history
 - [ ] Plugin system
 
