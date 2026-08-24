@@ -27,6 +27,7 @@ actions!(
     search_input,
     [
         Paste,
+        SelectAllInput,
         OpenClipboardHistory,
         DeleteClipboardEntry,
         ClearClipboardHistory
@@ -48,6 +49,7 @@ enum PendingClipboardAction {
 pub struct Spotlight {
     pub focus: FocusHandle,
     query: String,
+    selected_range: Range<usize>,
     mode: SearchMode,
     apps: Vec<AppEntry>,
     clipboard_history: ClipboardHistory,
@@ -92,6 +94,7 @@ impl Spotlight {
         Self {
             focus: cx.focus_handle(),
             query: String::new(),
+            selected_range: 0..0,
             mode: SearchMode::Applications,
             apps: Vec::new(),
             clipboard_history: ClipboardHistory::default(),
@@ -118,6 +121,7 @@ impl Spotlight {
 
     pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.clear();
+        self.selected_range = 0..0;
         self.mode = SearchMode::Applications;
         self.files.clear();
         self.file_request_id.fetch_add(1, Ordering::Relaxed);
@@ -146,6 +150,15 @@ impl Spotlight {
 
     fn reset_caret_blink(&mut self) {
         self.caret_blink_started = Instant::now();
+    }
+
+    fn clear_query(&mut self, cx: &mut Context<Self>) {
+        self.query.clear();
+        self.selected_range = 0..0;
+        self.marked_range = None;
+        self.query_changed(cx);
+        self.reset_caret_blink();
+        cx.notify();
     }
 
     fn caret_is_visible(&self) -> bool {
@@ -340,16 +353,17 @@ impl Spotlight {
         let modifiers = event.keystroke.modifiers;
         match event.keystroke.key.as_ref() {
             "backspace" => {
-                let clipboard_action = self.mode == SearchMode::Clipboard
-                    && self.query.is_empty()
-                    && modifiers.platform;
-                if !clipboard_action {
-                    if modifiers.platform {
-                        self.query.clear();
-                    } else if modifiers.alt {
-                        delete_word(&mut self.query);
-                    } else {
-                        self.query.pop();
+                if !modifiers.platform {
+                    let deleted_selection =
+                        delete_selected_text(&mut self.query, &mut self.selected_range);
+                    if !deleted_selection {
+                        if modifiers.alt {
+                            delete_word(&mut self.query);
+                        } else {
+                            self.query.pop();
+                        }
+                        let end = self.query.len();
+                        self.selected_range = end..end;
                     }
                     self.marked_range = None;
                     self.query_changed(cx);
@@ -373,13 +387,21 @@ impl Spotlight {
         cx.notify();
     }
 
-    fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.query.push_str(&text.replace(['\r', '\n'], " "));
-            self.query_changed(cx);
-            self.reset_caret_blink();
-            cx.notify();
+            self.replace_text_in_range(None, &text.replace(['\r', '\n'], " "), window, cx);
         }
+    }
+
+    fn select_all_input(
+        &mut self,
+        _: &SelectAllInput,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected_range = 0..self.query.len();
+        self.marked_range = None;
+        cx.notify();
     }
 
     fn open_clipboard_history(
@@ -393,6 +415,7 @@ impl Spotlight {
         } else {
             self.mode = SearchMode::Clipboard;
             self.query.clear();
+            self.selected_range = 0..0;
             self.files.clear();
             self.file_request_id.fetch_add(1, Ordering::Relaxed);
             self.files_loading = false;
@@ -411,6 +434,8 @@ impl Spotlight {
     ) {
         if self.mode == SearchMode::Clipboard && self.query.is_empty() {
             self.request_delete_selected(cx);
+        } else {
+            self.clear_query(cx);
         }
     }
 
@@ -422,12 +447,15 @@ impl Spotlight {
     ) {
         if self.mode == SearchMode::Clipboard && self.query.is_empty() {
             self.request_clear_clipboard(cx);
+        } else if !self.query.is_empty() {
+            self.clear_query(cx);
         }
     }
 
     fn show_application_search(&mut self, cx: &mut Context<Self>) {
         self.mode = SearchMode::Applications;
         self.query.clear();
+        self.selected_range = 0..0;
         self.marked_range = None;
         self.refilter();
         self.reset_caret_blink();
@@ -683,6 +711,16 @@ fn delete_word(query: &mut String) {
     *query = chars.into_iter().collect();
 }
 
+fn delete_selected_text(query: &mut String, selected_range: &mut Range<usize>) -> bool {
+    if selected_range.start == selected_range.end {
+        return false;
+    }
+    let start = selected_range.start;
+    query.replace_range(selected_range.clone(), "");
+    *selected_range = start..start;
+    true
+}
+
 impl Focusable for Spotlight {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus.clone()
@@ -708,9 +746,8 @@ impl EntityInputHandler for Spotlight {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let end = self.query.encode_utf16().count();
         Some(UTF16Selection {
-            range: end..end,
+            range: self.range_to_utf16(&self.selected_range),
             reversed: false,
         })
     }
@@ -740,9 +777,11 @@ impl EntityInputHandler for Spotlight {
             .as_ref()
             .map(|range| self.range_from_utf16(range))
             .or_else(|| self.marked_range.clone())
-            .unwrap_or(self.query.len()..self.query.len());
+            .unwrap_or_else(|| self.selected_range.clone());
         let text = new_text.replace(['\r', '\n'], " ");
+        let cursor = range.start + text.len();
         self.query.replace_range(range, &text);
+        self.selected_range = cursor..cursor;
         self.marked_range = None;
         self.query_changed(cx);
         self.reset_caret_blink();
@@ -761,10 +800,12 @@ impl EntityInputHandler for Spotlight {
             .as_ref()
             .map(|range| self.range_from_utf16(range))
             .or_else(|| self.marked_range.clone())
-            .unwrap_or(self.query.len()..self.query.len());
+            .unwrap_or_else(|| self.selected_range.clone());
         let start = range.start;
         self.query.replace_range(range, new_text);
         self.marked_range = (!new_text.is_empty()).then_some(start..start + new_text.len());
+        let cursor = start + new_text.len();
+        self.selected_range = cursor..cursor;
         self.query_changed(cx);
         self.reset_caret_blink();
         cx.notify();
@@ -831,7 +872,8 @@ struct SearchTextElement {
 
 struct SearchTextPrepaint {
     line: ShapedLine,
-    caret: PaintQuad,
+    caret: Option<PaintQuad>,
+    selection: Option<PaintQuad>,
     text_origin: gpui::Point<Pixels>,
 }
 
@@ -918,16 +960,39 @@ impl Element for SearchTextElement {
         };
         let caret_height = line.ascent + line.descent;
         let caret_top = bounds.top() + (bounds.size.height - caret_height) / 2.;
-        let caret = fill(
-            Bounds::new(
-                point(caret_x + px(2.), caret_top),
-                size(px(2.), caret_height),
-            ),
-            Theme::CARET,
-        );
+        let (caret, selection) = if spotlight.selected_range.is_empty() {
+            (
+                Some(fill(
+                    Bounds::new(
+                        point(caret_x + px(2.), caret_top),
+                        size(px(2.), caret_height),
+                    ),
+                    Theme::CARET,
+                )),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(fill(
+                    Bounds::from_corners(
+                        point(
+                            text_origin.x + line.x_for_index(spotlight.selected_range.start),
+                            caret_top,
+                        ),
+                        point(
+                            text_origin.x + line.x_for_index(spotlight.selected_range.end),
+                            caret_top + caret_height,
+                        ),
+                    ),
+                    Theme::SELECTED_BG,
+                )),
+            )
+        };
         SearchTextPrepaint {
             line,
             caret,
+            selection,
             text_origin,
         }
     }
@@ -951,13 +1016,16 @@ impl Element for SearchTextElement {
             ElementInputHandler::new(bounds, self.spotlight.clone()),
             cx,
         );
+        if let Some(selection) = prepaint.selection.as_ref() {
+            window.paint_quad(selection.clone());
+        }
         let _ = prepaint
             .line
             .paint(prepaint.text_origin, bounds.size.height, window, cx);
         if focus.is_focused(window) {
             window.request_animation_frame();
-            if caret_is_visible {
-                window.paint_quad(prepaint.caret.clone());
+            if caret_is_visible && let Some(caret) = prepaint.caret.as_ref() {
+                window.paint_quad(caret.clone());
             }
         }
         self.spotlight.update(cx, |spotlight, _| {
@@ -1039,6 +1107,7 @@ impl Render for Spotlight {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::select_all_input))
             .on_action(cx.listener(Self::open_clipboard_history))
             .on_action(cx.listener(Self::delete_clipboard_entry))
             .on_action(cx.listener(Self::clear_clipboard_history))
@@ -1217,5 +1286,16 @@ mod tests {
         let mut query = "Open 日本語".to_string();
         delete_word(&mut query);
         assert_eq!(query, "Open ");
+    }
+
+    #[test]
+    fn deleting_a_selection_clears_it_in_one_step() {
+        let mut query = "Open 日本語".to_string();
+        let mut selected_range = 0..query.len();
+
+        assert!(delete_selected_text(&mut query, &mut selected_range));
+        assert!(query.is_empty());
+        assert_eq!(selected_range, 0..0);
+        assert!(!delete_selected_text(&mut query, &mut selected_range));
     }
 }
