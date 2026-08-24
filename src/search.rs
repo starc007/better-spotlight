@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::ops::Range;
+use std::time::Instant;
 
 use gpui::{
     Animation, AnimationExt, App, Bounds, Context, Element, ElementId, ElementInputHandler, Entity,
@@ -31,6 +32,7 @@ pub struct Spotlight {
     marked_range: Option<Range<usize>>,
     last_input_layout: Option<ShapedLine>,
     last_input_bounds: Option<Bounds<Pixels>>,
+    caret_blink_started: Instant,
 }
 
 impl Spotlight {
@@ -66,6 +68,7 @@ impl Spotlight {
             marked_range: None,
             last_input_layout: None,
             last_input_bounds: None,
+            caret_blink_started: Instant::now(),
         }
     }
 
@@ -74,6 +77,7 @@ impl Spotlight {
         self.marked_range = None;
         self.message = None;
         self.refilter();
+        self.reset_caret_blink();
         self.focus.focus(window);
         window.activate_window();
         cx.notify();
@@ -82,6 +86,14 @@ impl Spotlight {
     pub fn set_shortcut_error(&mut self, message: String, cx: &mut Context<Self>) {
         self.shortcut_error = Some(message);
         cx.notify();
+    }
+
+    fn reset_caret_blink(&mut self) {
+        self.caret_blink_started = Instant::now();
+    }
+
+    fn caret_is_visible(&self) -> bool {
+        self.caret_blink_started.elapsed().as_millis() % 1_060 < 530
     }
 
     fn refilter(&mut self) {
@@ -131,6 +143,7 @@ impl Spotlight {
                 }
                 self.marked_range = None;
                 self.refilter();
+                self.reset_caret_blink();
             }
             "escape" => cx.hide(),
             "enter" => {
@@ -154,6 +167,7 @@ impl Spotlight {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.query.push_str(&text.replace(['\r', '\n'], " "));
             self.refilter();
+            self.reset_caret_blink();
             cx.notify();
         }
     }
@@ -301,6 +315,7 @@ impl EntityInputHandler for Spotlight {
         self.query.replace_range(range, &text);
         self.marked_range = None;
         self.refilter();
+        self.reset_caret_blink();
         cx.notify();
     }
 
@@ -321,6 +336,7 @@ impl EntityInputHandler for Spotlight {
         self.query.replace_range(range, new_text);
         self.marked_range = (!new_text.is_empty()).then_some(start..start + new_text.len());
         self.refilter();
+        self.reset_caret_blink();
         cx.notify();
     }
 
@@ -386,6 +402,7 @@ struct SearchTextElement {
 struct SearchTextPrepaint {
     line: ShapedLine,
     caret: PaintQuad,
+    text_origin: gpui::Point<Pixels>,
 }
 
 impl IntoElement for SearchTextElement {
@@ -448,19 +465,33 @@ impl Element for SearchTextElement {
         let line = window
             .text_system()
             .shape_line(text, font_size, &[run], None);
+        let text_origin = point(
+            if spotlight.query.is_empty() {
+                bounds.left() + px(6.)
+            } else {
+                bounds.left()
+            },
+            bounds.top(),
+        );
         let caret_x = if spotlight.query.is_empty() {
             bounds.left()
         } else {
-            bounds.left() + line.x_for_index(spotlight.query.len())
+            text_origin.x + line.x_for_index(spotlight.query.len())
         };
+        let caret_height = line.ascent + line.descent;
+        let caret_top = bounds.top() + (bounds.size.height - caret_height) / 2.;
         let caret = fill(
             Bounds::new(
-                point(caret_x + px(2.), bounds.top()),
-                size(px(2.), bounds.size.height),
+                point(caret_x + px(2.), caret_top),
+                size(px(2.), caret_height),
             ),
             Theme::CARET,
         );
-        SearchTextPrepaint { line, caret }
+        SearchTextPrepaint {
+            line,
+            caret,
+            text_origin,
+        }
     }
 
     fn paint(
@@ -473,7 +504,10 @@ impl Element for SearchTextElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let focus = self.spotlight.read(cx).focus.clone();
+        let (focus, caret_is_visible) = {
+            let spotlight = self.spotlight.read(cx);
+            (spotlight.focus.clone(), spotlight.caret_is_visible())
+        };
         window.handle_input(
             &focus,
             ElementInputHandler::new(bounds, self.spotlight.clone()),
@@ -481,9 +515,12 @@ impl Element for SearchTextElement {
         );
         let _ = prepaint
             .line
-            .paint(bounds.origin, window.line_height(), window, cx);
-        if focus.is_focused(window) && !self.spotlight.read(cx).query.is_empty() {
-            window.paint_quad(prepaint.caret.clone());
+            .paint(prepaint.text_origin, bounds.size.height, window, cx);
+        if focus.is_focused(window) {
+            window.request_animation_frame();
+            if caret_is_visible {
+                window.paint_quad(prepaint.caret.clone());
+            }
         }
         self.spotlight.update(cx, |spotlight, _| {
             spotlight.last_input_layout = Some(prepaint.line.clone());

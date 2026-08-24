@@ -20,7 +20,7 @@ impl Theme {
     pub const RESULT_TEXT: Rgba = hex_rgb(0xc9ccd4);
     pub const SELECTED_BG: Rgba = hex_rgb(0x27408f);
     pub const SELECTED_TEXT: Rgba = hex_rgb(0xffffff);
-    pub const CARET: Rgba = hex_rgb(0x4d8dff);
+    pub const CARET: Rgba = hex_rgb(0x8b8e97);
     pub const FOOTER_TEXT: Rgba = hex_rgb(0x565a66);
     pub const FALLBACK_TILES: [Rgba; 6] = [
         hex_rgb(0x3d5afe),
