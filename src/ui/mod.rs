@@ -1,12 +1,10 @@
 pub mod result_row;
 
-use std::time::Duration;
-
-use gpui::{div, prelude::*, px, Animation, AnimationExt, AnyElement, Div};
+use gpui::{AnyElement, Div, div, prelude::*, px};
 
 use crate::theme::Theme;
 
-pub fn input_field(query: &str) -> Div {
+pub fn input_field(content: impl IntoElement) -> Div {
     div()
         .flex()
         .items_center()
@@ -15,12 +13,7 @@ pub fn input_field(query: &str) -> Div {
         .pb_3()
         .text_size(px(20.))
         .text_color(Theme::INPUT_TEXT)
-        .when(query.is_empty(), |el| {
-            el.child(div().text_color(Theme::PLACEHOLDER).child("Search applications…"))
-        })
-        .when(!query.is_empty(), |el| {
-            el.child(query.to_string()).child(caret())
-        })
+        .child(content)
 }
 
 pub fn results_list(children: Vec<AnyElement>) -> Div {
@@ -34,7 +27,7 @@ pub fn results_list(children: Vec<AnyElement>) -> Div {
         .children(children)
 }
 
-pub fn empty_state() -> Div {
+pub fn empty_state(message: &str) -> Div {
     div()
         .flex()
         .flex_1()
@@ -42,22 +35,32 @@ pub fn empty_state() -> Div {
         .justify_center()
         .text_size(px(14.))
         .text_color(Theme::PLACEHOLDER)
-        .child("No results")
+        .child(message.to_string())
 }
 
-pub fn footer() -> Div {
-    div()
+pub fn footer(message: Option<&str>) -> Div {
+    let footer = div()
         .mt_auto()
         .flex()
         .items_center()
-        .justify_end()
         .gap_3()
         .px_3()
         .py_2()
         .border_t_1()
         .border_color(Theme::BORDER)
         .text_size(px(12.))
-        .text_color(Theme::FOOTER_TEXT)
+        .text_color(Theme::FOOTER_TEXT);
+
+    footer
+        .when_some(message, |footer, message| {
+            footer.child(
+                div()
+                    .flex_1()
+                    .text_color(gpui::rgb(0xff7b72))
+                    .child(message.to_string()),
+            )
+        })
+        .when(message.is_none(), |footer| footer.child(div().flex_1()))
         .child(hint("↑↓", "Navigate"))
         .child(hint("↵", "Open"))
         .child(hint("esc", "Close"))
@@ -83,18 +86,4 @@ fn hint(key: &str, label: &str) -> impl IntoElement {
 
 fn rgb_footer_key() -> gpui::Rgba {
     gpui::rgb(0x22242b)
-}
-
-fn caret() -> impl IntoElement {
-    div()
-        .w(px(2.))
-        .h(px(24.))
-        .ml_0p5()
-        .rounded_full()
-        .bg(Theme::CARET)
-        .with_animation(
-            "caret-blink",
-            Animation::new(Duration::from_millis(1100)).repeat(),
-            |el, delta| el.opacity(if delta < 0.5 { 1.0 } else { 0.15 }),
-        )
 }

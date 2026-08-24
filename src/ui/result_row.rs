@@ -1,4 +1,4 @@
-use gpui::{div, img, prelude::*, px, Animation, AnimationExt, AnyElement, Div, Rgba};
+use gpui::{Animation, AnimationExt, AnyElement, Div, Rgba, div, img, prelude::*, px};
 
 use crate::apps::AppEntry;
 use crate::theme::{self, Theme};
@@ -23,7 +23,7 @@ pub fn result_row(app: &AppEntry, selected: bool, move_count: u64) -> AnyElement
             Animation::new(std::time::Duration::from_millis(140)),
             |row: Div, delta| {
                 let ease = 1.0 - (1.0 - delta) * (1.0 - delta);
-                row.bg(fade_in(Theme::SELECTED_BG, ease as f32))
+                row.bg(fade_in(Theme::SELECTED_BG, ease))
             },
         )
         .into_any_element()
@@ -42,11 +42,7 @@ fn icon_element(app: &AppEntry) -> impl IntoElement {
         Some(icon) => div()
             .size(px(theme::ICON_SIZE))
             .flex_shrink_0()
-            .child(
-                img(icon.clone())
-                    .size(px(theme::ICON_SIZE))
-                    .rounded(px(7.)),
-            ),
+            .child(img(icon.clone()).size(px(theme::ICON_SIZE)).rounded(px(7.))),
         None => fallback_tile(&app.name),
     }
 }
